@@ -11,7 +11,6 @@ import datetime
 import wandb
 from wandb.sdk.data_types.trace_tree import Trace
 
-wandb.init(project="test-trace")
 
 load_dotenv()
 
@@ -24,7 +23,9 @@ CHANNEL_ID = os.getenv("CHANNEL_ID")
 GUILD_ID = os.getenv("GUILD_ID")
 ROLE_ID = os.getenv("ROLE_ID")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+WANDB_PROJECT = os.getenv("WANDB_PROJECT")
 
+wandb.init(project=WANDB_PROJECT)
 
 
 er = EventRegistry(apiKey = NEWS_API_KEY)
@@ -57,14 +58,7 @@ def get_news():
 
 
 def get_summary():
-    system = """You are a discord bot that will recieve a list of articles.
-    First create a relevant title based on the 3 articles.
-    Then produce a single 3 sentence paragraph report (in paragraph form) based on the information on all of the articles.
-    Your response must be on the following markdown format ():
-    <START>
-    # <TITLE>
-    <3_SENTENCE_PARAGRAPH_REPORT>
-    <END>"""
+    system = """You are a discord bot representing an AI expert that will produce a single report on the articles provided."""
     user_prompt = """Article bodies:
     <ARTICLE_BODIES>"""
 
@@ -89,7 +83,30 @@ def get_summary():
 
     start_time_ms = datetime.datetime.now().timestamp() * 1000
     response = client.chat.completions.create(
-        model=MODEL, messages=messages, temperature=TEMP
+        model=MODEL, messages=messages, temperature=TEMP, tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "response",
+                    "description": "Structured response to the user message.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "A title representative of the current state of AI according to the articles provided."
+                            },
+                            "report": {
+                                "type": "string",
+                                "description": "An informal report that recaps the articles provided in no more than 3 sentences."
+                            },
+                        },
+                        "required": ["title", "report"]
+                    }
+                }
+            }
+        ],
+        tool_choice={"type": "function", "function": {"name": "response"}}
     )
     end_time_ms = round(
         datetime.datetime.now().timestamp() * 1000
@@ -98,10 +115,10 @@ def get_summary():
     status_message = (None,)
 
     pre_message = f"<@&{ROLE_ID}>\n"
-    response_text = response.choices[0].message.content
-    response_text = response_text.replace("<START>", "").replace("<END>", "")
+    response_json = json.loads(response.choices[0].message.tool_calls[0].function.arguments)
+    response_text = f"# {response_json['title']}\n{response_json['report']}"
     # add the titles linked to urls in markdown format as a list under response_text
-    additional_article_info = "\n\n" + "Articles:\n" + "\n".join(
+    additional_article_info = "\n\n" + "### Articles:\n" + "\n".join(
         [f"- [{article['title']}]({article['url']})" for article in news]
     )
     # if response_text+additional_article_info is longer than 2000 characters, truncate response_text down to 1997 characters and ellipsize
@@ -151,22 +168,23 @@ class MyBot(commands.Bot):
         async for guild in self.fetch_guilds(limit=150):
             print(guild.name, guild.id)
             if guild.id == int(GUILD_ID):
-                print("\n\nROLES:")
+                print("  ROLES:")
                 roles = await guild.fetch_roles()
                 for role in roles:
-                    print(role.name, role.id)
+                    print("  ", role.name, role.id)
 
-    @tasks.loop(seconds=30)
+    @tasks.loop(hours=48)
     async def my_background_task_loop(self):
         # geta all channel ids
         print("\n\nCHANNELS:")
         for channel in self.get_all_channels():
             print(channel.name, channel.id)
         channel = self.get_channel(int(CHANNEL_ID))  # Replace with your channel ID
+        print("\n\nChannel: ", type(channel), channel, "SENDING MESSAGE")
+
         message = get_summary()
         print(message)
-        if channel:
-            await channel.send(message)
+        await channel.send(message)
 
     @my_background_task_loop.before_loop
     async def before_my_background_task_loop(self):
