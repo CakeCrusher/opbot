@@ -194,4 +194,21 @@ class MyBot(commands.Bot):
 intents = discord.Intents.default()
 bot = MyBot(command_prefix='/', intents=intents)
 
-bot.run(BOT_TOKEN)  # Replace with your actual bot token
+from flask import Flask, request
+
+# Create a Flask app
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Bot is running"
+
+# Rest of your bot code
+if __name__ == "__main__":
+    from threading import Thread
+
+    # Run the Flask app on a separate thread
+    Thread(target=lambda: web_app.run(host="0.0.0.0", port=int(os.environ.get('PORT', 5000)))).start()
+
+    # Run your Discord bot
+    bot.run(BOT_TOKEN)
